@@ -1,0 +1,5455 @@
+{
+  "transport": "real HTTP / separate API and worker processes",
+  "checks_passed": [
+    "approval",
+    "idempotent_replay",
+    "idempotency_conflict",
+    "schema_rejection",
+    "rejection",
+    "manual_pending",
+    "manual_approved",
+    "retry_pending",
+    "retry_recovered",
+    "permanent_failure",
+    "vendor_approval",
+    "policy_v1",
+    "policy_v2",
+    "version_pinning",
+    "openapi"
+  ],
+  "examples": {
+    "approval": {
+      "request": {
+        "id": "e582dc51-b43d-4d47-819e-b12634bde258",
+        "input_hash": "47234f6ad8ae4c03708c053f109d9588efe9f890cc280866fce58d02552a32dd",
+        "workflow_id": "loan_approval",
+        "workflow_version": 1,
+        "state": "APPROVED",
+        "stage": "approved",
+        "payload": {
+          "age": 30,
+          "amount": 25000,
+          "applicant_id": "demo-001",
+          "consent": true,
+          "income": 60000
+        },
+        "dependencies": {
+          "identity": {
+            "operation_key": "e582dc51-b43d-4d47-819e-b12634bde258:identity",
+            "provider": "simulated_verification",
+            "risk_score": 10,
+            "verified": true
+          }
+        },
+        "attempts": {
+          "identity": 1
+        },
+        "next_attempt_at": null,
+        "created_at": 1794568864.6482728,
+        "updated_at": 1794568864.653856
+      },
+      "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+      "workflow": {
+        "workflow_id": "loan_approval",
+        "version": 1,
+        "description": "Loan eligibility with identity verification and risk review",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "age": {
+              "maximum": 130,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "amount": {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            },
+            "applicant_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            "consent": {
+              "type": "boolean"
+            },
+            "income": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            "simulation": {
+              "additionalProperties": false,
+              "properties": {
+                "fail_until": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permanent_failure": {
+                  "type": "boolean"
+                },
+                "risk_score": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "applicant_id",
+            "age",
+            "income",
+            "amount",
+            "consent"
+          ],
+          "type": "object"
+        },
+        "start": "eligibility",
+        "retry": {
+          "max_attempts": 3,
+          "base_delay_seconds": 2,
+          "max_delay_seconds": 30
+        },
+        "stages": {
+          "approved": {
+            "type": "terminal",
+            "outcome": "APPROVED",
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved"
+          },
+          "eligibility": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "missing_consent",
+                "description": "Explicit consent is mandatory",
+                "condition": {
+                  "field": "input.consent",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "underage",
+                "description": "Applicant must be at least 18 years old",
+                "condition": {
+                  "field": "input.age",
+                  "op": "lt",
+                  "value": 18
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "income_below_minimum",
+                "description": "Annual income must be at least 30000",
+                "condition": {
+                  "field": "input.income",
+                  "op": "lt",
+                  "value": 30000
+                },
+                "on_match": "rejected"
+              }
+            ],
+            "default": "identity"
+          },
+          "identity": {
+            "type": "dependency",
+            "adapter": "simulated_verification",
+            "next": "risk",
+            "on_failure": "review"
+          },
+          "rejected": {
+            "type": "terminal",
+            "outcome": "REJECTED",
+            "reason": "A blocking rule matched or reviewer rejected; consult rule and review audit events"
+          },
+          "review": {
+            "type": "manual",
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "decisions": {
+              "approve": "approved",
+              "reject": "rejected"
+            }
+          },
+          "risk": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "identity_failed",
+                "description": "Unverified identity cannot be approved",
+                "condition": {
+                  "field": "dependencies.identity.verified",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "high_risk",
+                "description": "Risk scores of 80 or above require rejection",
+                "condition": {
+                  "field": "dependencies.identity.risk_score",
+                  "op": "gte",
+                  "value": 80
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "review_required",
+                "description": "Elevated risk or large amount requires human judgement",
+                "condition": {
+                  "any": [
+                    {
+                      "field": "dependencies.identity.risk_score",
+                      "op": "gte",
+                      "value": 50
+                    },
+                    {
+                      "field": "input.amount",
+                      "op": "gt",
+                      "value": 100000
+                    }
+                  ]
+                },
+                "on_match": "review"
+              }
+            ],
+            "default": "approved"
+          }
+        }
+      },
+      "rule_trace": [
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 3,
+          "timestamp": 1794568864.6537025,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 4,
+          "timestamp": 1794568864.653722,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 5,
+          "timestamp": 1794568864.6537344,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 9,
+          "timestamp": 1794568864.6538048,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 10,
+          "timestamp": 1794568864.6538143,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 80,
+              "field": "dependencies.identity.risk_score",
+              "matched": false,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 11,
+          "timestamp": 1794568864.6538286,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": 10,
+                  "expected": 50,
+                  "field": "dependencies.identity.risk_score",
+                  "matched": false,
+                  "operator": "gte",
+                  "present": true
+                },
+                {
+                  "actual": 25000,
+                  "expected": 100000,
+                  "field": "input.amount",
+                  "matched": false,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": false,
+              "operator": "any"
+            },
+            "description": "Elevated risk or large amount requires human judgement",
+            "matched": false,
+            "on_match": "review",
+            "rule_id": "review_required",
+            "stage": "risk"
+          }
+        }
+      ],
+      "events": [
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 1,
+          "timestamp": 1794568864.6482728,
+          "kind": "submitted",
+          "data": {
+            "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+            "input": {
+              "age": 30,
+              "amount": 25000,
+              "applicant_id": "demo-001",
+              "consent": true,
+              "income": 60000
+            },
+            "input_hash": "47234f6ad8ae4c03708c053f109d9588efe9f890cc280866fce58d02552a32dd",
+            "stage": "eligibility",
+            "state": "QUEUED",
+            "workflow_id": "loan_approval",
+            "workflow_version": 1
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 2,
+          "timestamp": 1794568864.6536486,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "QUEUED"
+            },
+            "reason": "execution_started",
+            "to": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 3,
+          "timestamp": 1794568864.6537025,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 4,
+          "timestamp": 1794568864.653722,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 5,
+          "timestamp": 1794568864.6537344,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 6,
+          "timestamp": 1794568864.6537552,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "identity",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 7,
+          "timestamp": 1794568864.6537743,
+          "kind": "dependency_succeeded",
+          "data": {
+            "adapter": "simulated_verification",
+            "attempt": 1,
+            "result": {
+              "operation_key": "e582dc51-b43d-4d47-819e-b12634bde258:identity",
+              "provider": "simulated_verification",
+              "risk_score": 10,
+              "verified": true
+            },
+            "stage": "identity"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 8,
+          "timestamp": 1794568864.653794,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "identity",
+              "state": "RUNNING"
+            },
+            "reason": "dependency_succeeded",
+            "to": {
+              "stage": "risk",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 9,
+          "timestamp": 1794568864.6538048,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 10,
+          "timestamp": 1794568864.6538143,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 80,
+              "field": "dependencies.identity.risk_score",
+              "matched": false,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 11,
+          "timestamp": 1794568864.6538286,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": 10,
+                  "expected": 50,
+                  "field": "dependencies.identity.risk_score",
+                  "matched": false,
+                  "operator": "gte",
+                  "present": true
+                },
+                {
+                  "actual": 25000,
+                  "expected": 100000,
+                  "field": "input.amount",
+                  "matched": false,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": false,
+              "operator": "any"
+            },
+            "description": "Elevated risk or large amount requires human judgement",
+            "matched": false,
+            "on_match": "review",
+            "rule_id": "review_required",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 12,
+          "timestamp": 1794568864.6538482,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "risk",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "approved",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "e582dc51-b43d-4d47-819e-b12634bde258",
+          "sequence": 13,
+          "timestamp": 1794568864.6538649,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "approved",
+              "state": "RUNNING"
+            },
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved",
+            "to": {
+              "stage": "approved",
+              "state": "APPROVED"
+            }
+          }
+        }
+      ]
+    },
+    "rejection": {
+      "request": {
+        "id": "75d2122b-2918-41a0-ab44-2bd963bdf81f",
+        "input_hash": "ab09b52833da2fa835bdf4cb0c53aa9337a104f01a57b42d34910062966e2558",
+        "workflow_id": "loan_approval",
+        "workflow_version": 1,
+        "state": "REJECTED",
+        "stage": "rejected",
+        "payload": {
+          "age": 17,
+          "amount": 25000,
+          "applicant_id": "demo-001",
+          "consent": true,
+          "income": 60000
+        },
+        "dependencies": {},
+        "attempts": {},
+        "next_attempt_at": null,
+        "created_at": 1794568864.6751733,
+        "updated_at": 1794568864.6808004
+      },
+      "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+      "workflow": {
+        "workflow_id": "loan_approval",
+        "version": 1,
+        "description": "Loan eligibility with identity verification and risk review",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "age": {
+              "maximum": 130,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "amount": {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            },
+            "applicant_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            "consent": {
+              "type": "boolean"
+            },
+            "income": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            "simulation": {
+              "additionalProperties": false,
+              "properties": {
+                "fail_until": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permanent_failure": {
+                  "type": "boolean"
+                },
+                "risk_score": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "applicant_id",
+            "age",
+            "income",
+            "amount",
+            "consent"
+          ],
+          "type": "object"
+        },
+        "start": "eligibility",
+        "retry": {
+          "max_attempts": 3,
+          "base_delay_seconds": 2,
+          "max_delay_seconds": 30
+        },
+        "stages": {
+          "approved": {
+            "type": "terminal",
+            "outcome": "APPROVED",
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved"
+          },
+          "eligibility": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "missing_consent",
+                "description": "Explicit consent is mandatory",
+                "condition": {
+                  "field": "input.consent",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "underage",
+                "description": "Applicant must be at least 18 years old",
+                "condition": {
+                  "field": "input.age",
+                  "op": "lt",
+                  "value": 18
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "income_below_minimum",
+                "description": "Annual income must be at least 30000",
+                "condition": {
+                  "field": "input.income",
+                  "op": "lt",
+                  "value": 30000
+                },
+                "on_match": "rejected"
+              }
+            ],
+            "default": "identity"
+          },
+          "identity": {
+            "type": "dependency",
+            "adapter": "simulated_verification",
+            "next": "risk",
+            "on_failure": "review"
+          },
+          "rejected": {
+            "type": "terminal",
+            "outcome": "REJECTED",
+            "reason": "A blocking rule matched or reviewer rejected; consult rule and review audit events"
+          },
+          "review": {
+            "type": "manual",
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "decisions": {
+              "approve": "approved",
+              "reject": "rejected"
+            }
+          },
+          "risk": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "identity_failed",
+                "description": "Unverified identity cannot be approved",
+                "condition": {
+                  "field": "dependencies.identity.verified",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "high_risk",
+                "description": "Risk scores of 80 or above require rejection",
+                "condition": {
+                  "field": "dependencies.identity.risk_score",
+                  "op": "gte",
+                  "value": 80
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "review_required",
+                "description": "Elevated risk or large amount requires human judgement",
+                "condition": {
+                  "any": [
+                    {
+                      "field": "dependencies.identity.risk_score",
+                      "op": "gte",
+                      "value": 50
+                    },
+                    {
+                      "field": "input.amount",
+                      "op": "gt",
+                      "value": 100000
+                    }
+                  ]
+                },
+                "on_match": "review"
+              }
+            ],
+            "default": "approved"
+          }
+        }
+      },
+      "rule_trace": [
+        {
+          "request_id": "75d2122b-2918-41a0-ab44-2bd963bdf81f",
+          "sequence": 3,
+          "timestamp": 1794568864.6807563,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "75d2122b-2918-41a0-ab44-2bd963bdf81f",
+          "sequence": 4,
+          "timestamp": 1794568864.6807714,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 17,
+              "expected": 18,
+              "field": "input.age",
+              "matched": true,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": true,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        }
+      ],
+      "events": [
+        {
+          "request_id": "75d2122b-2918-41a0-ab44-2bd963bdf81f",
+          "sequence": 1,
+          "timestamp": 1794568864.6751733,
+          "kind": "submitted",
+          "data": {
+            "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+            "input": {
+              "age": 17,
+              "amount": 25000,
+              "applicant_id": "demo-001",
+              "consent": true,
+              "income": 60000
+            },
+            "input_hash": "ab09b52833da2fa835bdf4cb0c53aa9337a104f01a57b42d34910062966e2558",
+            "stage": "eligibility",
+            "state": "QUEUED",
+            "workflow_id": "loan_approval",
+            "workflow_version": 1
+          }
+        },
+        {
+          "request_id": "75d2122b-2918-41a0-ab44-2bd963bdf81f",
+          "sequence": 2,
+          "timestamp": 1794568864.6807113,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "QUEUED"
+            },
+            "reason": "execution_started",
+            "to": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "75d2122b-2918-41a0-ab44-2bd963bdf81f",
+          "sequence": 3,
+          "timestamp": 1794568864.6807563,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "75d2122b-2918-41a0-ab44-2bd963bdf81f",
+          "sequence": 4,
+          "timestamp": 1794568864.6807714,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 17,
+              "expected": 18,
+              "field": "input.age",
+              "matched": true,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": true,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "75d2122b-2918-41a0-ab44-2bd963bdf81f",
+          "sequence": 5,
+          "timestamp": 1794568864.6807916,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            },
+            "reason": "rule:underage",
+            "to": {
+              "stage": "rejected",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "75d2122b-2918-41a0-ab44-2bd963bdf81f",
+          "sequence": 6,
+          "timestamp": 1794568864.6808088,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "rejected",
+              "state": "RUNNING"
+            },
+            "reason": "A blocking rule matched or reviewer rejected; consult rule and review audit events",
+            "to": {
+              "stage": "rejected",
+              "state": "REJECTED"
+            }
+          }
+        }
+      ]
+    },
+    "manual_pending": {
+      "request": {
+        "id": "80b09268-e511-4674-8c15-bd3f90491585",
+        "input_hash": "ea1fb697f9fdbabcad71696aa5339e159d2b23e3949f6db171578faf161dc9c1",
+        "workflow_id": "loan_approval",
+        "workflow_version": 1,
+        "state": "MANUAL_REVIEW",
+        "stage": "review",
+        "payload": {
+          "age": 30,
+          "amount": 200000,
+          "applicant_id": "demo-001",
+          "consent": true,
+          "income": 60000
+        },
+        "dependencies": {
+          "identity": {
+            "operation_key": "80b09268-e511-4674-8c15-bd3f90491585:identity",
+            "provider": "simulated_verification",
+            "risk_score": 10,
+            "verified": true
+          }
+        },
+        "attempts": {
+          "identity": 1
+        },
+        "next_attempt_at": null,
+        "created_at": 1794568864.6927662,
+        "updated_at": 1794568864.6978083
+      },
+      "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+      "workflow": {
+        "workflow_id": "loan_approval",
+        "version": 1,
+        "description": "Loan eligibility with identity verification and risk review",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "age": {
+              "maximum": 130,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "amount": {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            },
+            "applicant_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            "consent": {
+              "type": "boolean"
+            },
+            "income": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            "simulation": {
+              "additionalProperties": false,
+              "properties": {
+                "fail_until": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permanent_failure": {
+                  "type": "boolean"
+                },
+                "risk_score": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "applicant_id",
+            "age",
+            "income",
+            "amount",
+            "consent"
+          ],
+          "type": "object"
+        },
+        "start": "eligibility",
+        "retry": {
+          "max_attempts": 3,
+          "base_delay_seconds": 2,
+          "max_delay_seconds": 30
+        },
+        "stages": {
+          "approved": {
+            "type": "terminal",
+            "outcome": "APPROVED",
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved"
+          },
+          "eligibility": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "missing_consent",
+                "description": "Explicit consent is mandatory",
+                "condition": {
+                  "field": "input.consent",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "underage",
+                "description": "Applicant must be at least 18 years old",
+                "condition": {
+                  "field": "input.age",
+                  "op": "lt",
+                  "value": 18
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "income_below_minimum",
+                "description": "Annual income must be at least 30000",
+                "condition": {
+                  "field": "input.income",
+                  "op": "lt",
+                  "value": 30000
+                },
+                "on_match": "rejected"
+              }
+            ],
+            "default": "identity"
+          },
+          "identity": {
+            "type": "dependency",
+            "adapter": "simulated_verification",
+            "next": "risk",
+            "on_failure": "review"
+          },
+          "rejected": {
+            "type": "terminal",
+            "outcome": "REJECTED",
+            "reason": "A blocking rule matched or reviewer rejected; consult rule and review audit events"
+          },
+          "review": {
+            "type": "manual",
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "decisions": {
+              "approve": "approved",
+              "reject": "rejected"
+            }
+          },
+          "risk": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "identity_failed",
+                "description": "Unverified identity cannot be approved",
+                "condition": {
+                  "field": "dependencies.identity.verified",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "high_risk",
+                "description": "Risk scores of 80 or above require rejection",
+                "condition": {
+                  "field": "dependencies.identity.risk_score",
+                  "op": "gte",
+                  "value": 80
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "review_required",
+                "description": "Elevated risk or large amount requires human judgement",
+                "condition": {
+                  "any": [
+                    {
+                      "field": "dependencies.identity.risk_score",
+                      "op": "gte",
+                      "value": 50
+                    },
+                    {
+                      "field": "input.amount",
+                      "op": "gt",
+                      "value": 100000
+                    }
+                  ]
+                },
+                "on_match": "review"
+              }
+            ],
+            "default": "approved"
+          }
+        }
+      },
+      "rule_trace": [
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 3,
+          "timestamp": 1794568864.6975765,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 4,
+          "timestamp": 1794568864.6975944,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 5,
+          "timestamp": 1794568864.697612,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 9,
+          "timestamp": 1794568864.6977525,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 10,
+          "timestamp": 1794568864.6977654,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 80,
+              "field": "dependencies.identity.risk_score",
+              "matched": false,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 11,
+          "timestamp": 1794568864.697781,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": 10,
+                  "expected": 50,
+                  "field": "dependencies.identity.risk_score",
+                  "matched": false,
+                  "operator": "gte",
+                  "present": true
+                },
+                {
+                  "actual": 200000,
+                  "expected": 100000,
+                  "field": "input.amount",
+                  "matched": true,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": true,
+              "operator": "any"
+            },
+            "description": "Elevated risk or large amount requires human judgement",
+            "matched": true,
+            "on_match": "review",
+            "rule_id": "review_required",
+            "stage": "risk"
+          }
+        }
+      ],
+      "events": [
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 1,
+          "timestamp": 1794568864.6927662,
+          "kind": "submitted",
+          "data": {
+            "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+            "input": {
+              "age": 30,
+              "amount": 200000,
+              "applicant_id": "demo-001",
+              "consent": true,
+              "income": 60000
+            },
+            "input_hash": "ea1fb697f9fdbabcad71696aa5339e159d2b23e3949f6db171578faf161dc9c1",
+            "stage": "eligibility",
+            "state": "QUEUED",
+            "workflow_id": "loan_approval",
+            "workflow_version": 1
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 2,
+          "timestamp": 1794568864.6975365,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "QUEUED"
+            },
+            "reason": "execution_started",
+            "to": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 3,
+          "timestamp": 1794568864.6975765,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 4,
+          "timestamp": 1794568864.6975944,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 5,
+          "timestamp": 1794568864.697612,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 6,
+          "timestamp": 1794568864.6976972,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "identity",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 7,
+          "timestamp": 1794568864.6977203,
+          "kind": "dependency_succeeded",
+          "data": {
+            "adapter": "simulated_verification",
+            "attempt": 1,
+            "result": {
+              "operation_key": "80b09268-e511-4674-8c15-bd3f90491585:identity",
+              "provider": "simulated_verification",
+              "risk_score": 10,
+              "verified": true
+            },
+            "stage": "identity"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 8,
+          "timestamp": 1794568864.6977413,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "identity",
+              "state": "RUNNING"
+            },
+            "reason": "dependency_succeeded",
+            "to": {
+              "stage": "risk",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 9,
+          "timestamp": 1794568864.6977525,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 10,
+          "timestamp": 1794568864.6977654,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 80,
+              "field": "dependencies.identity.risk_score",
+              "matched": false,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 11,
+          "timestamp": 1794568864.697781,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": 10,
+                  "expected": 50,
+                  "field": "dependencies.identity.risk_score",
+                  "matched": false,
+                  "operator": "gte",
+                  "present": true
+                },
+                {
+                  "actual": 200000,
+                  "expected": 100000,
+                  "field": "input.amount",
+                  "matched": true,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": true,
+              "operator": "any"
+            },
+            "description": "Elevated risk or large amount requires human judgement",
+            "matched": true,
+            "on_match": "review",
+            "rule_id": "review_required",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 12,
+          "timestamp": 1794568864.6978009,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "risk",
+              "state": "RUNNING"
+            },
+            "reason": "rule:review_required",
+            "to": {
+              "stage": "review",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 13,
+          "timestamp": 1794568864.697817,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "review",
+              "state": "RUNNING"
+            },
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "to": {
+              "stage": "review",
+              "state": "MANUAL_REVIEW"
+            }
+          }
+        }
+      ]
+    },
+    "manual_approved": {
+      "request": {
+        "id": "80b09268-e511-4674-8c15-bd3f90491585",
+        "input_hash": "ea1fb697f9fdbabcad71696aa5339e159d2b23e3949f6db171578faf161dc9c1",
+        "workflow_id": "loan_approval",
+        "workflow_version": 1,
+        "state": "APPROVED",
+        "stage": "approved",
+        "payload": {
+          "age": 30,
+          "amount": 200000,
+          "applicant_id": "demo-001",
+          "consent": true,
+          "income": 60000
+        },
+        "dependencies": {
+          "identity": {
+            "operation_key": "80b09268-e511-4674-8c15-bd3f90491585:identity",
+            "provider": "simulated_verification",
+            "risk_score": 10,
+            "verified": true
+          }
+        },
+        "attempts": {
+          "identity": 1
+        },
+        "next_attempt_at": null,
+        "created_at": 1794568864.6927662,
+        "updated_at": 1794568864.7133179
+      },
+      "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+      "workflow": {
+        "workflow_id": "loan_approval",
+        "version": 1,
+        "description": "Loan eligibility with identity verification and risk review",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "age": {
+              "maximum": 130,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "amount": {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            },
+            "applicant_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            "consent": {
+              "type": "boolean"
+            },
+            "income": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            "simulation": {
+              "additionalProperties": false,
+              "properties": {
+                "fail_until": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permanent_failure": {
+                  "type": "boolean"
+                },
+                "risk_score": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "applicant_id",
+            "age",
+            "income",
+            "amount",
+            "consent"
+          ],
+          "type": "object"
+        },
+        "start": "eligibility",
+        "retry": {
+          "max_attempts": 3,
+          "base_delay_seconds": 2,
+          "max_delay_seconds": 30
+        },
+        "stages": {
+          "approved": {
+            "type": "terminal",
+            "outcome": "APPROVED",
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved"
+          },
+          "eligibility": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "missing_consent",
+                "description": "Explicit consent is mandatory",
+                "condition": {
+                  "field": "input.consent",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "underage",
+                "description": "Applicant must be at least 18 years old",
+                "condition": {
+                  "field": "input.age",
+                  "op": "lt",
+                  "value": 18
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "income_below_minimum",
+                "description": "Annual income must be at least 30000",
+                "condition": {
+                  "field": "input.income",
+                  "op": "lt",
+                  "value": 30000
+                },
+                "on_match": "rejected"
+              }
+            ],
+            "default": "identity"
+          },
+          "identity": {
+            "type": "dependency",
+            "adapter": "simulated_verification",
+            "next": "risk",
+            "on_failure": "review"
+          },
+          "rejected": {
+            "type": "terminal",
+            "outcome": "REJECTED",
+            "reason": "A blocking rule matched or reviewer rejected; consult rule and review audit events"
+          },
+          "review": {
+            "type": "manual",
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "decisions": {
+              "approve": "approved",
+              "reject": "rejected"
+            }
+          },
+          "risk": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "identity_failed",
+                "description": "Unverified identity cannot be approved",
+                "condition": {
+                  "field": "dependencies.identity.verified",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "high_risk",
+                "description": "Risk scores of 80 or above require rejection",
+                "condition": {
+                  "field": "dependencies.identity.risk_score",
+                  "op": "gte",
+                  "value": 80
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "review_required",
+                "description": "Elevated risk or large amount requires human judgement",
+                "condition": {
+                  "any": [
+                    {
+                      "field": "dependencies.identity.risk_score",
+                      "op": "gte",
+                      "value": 50
+                    },
+                    {
+                      "field": "input.amount",
+                      "op": "gt",
+                      "value": 100000
+                    }
+                  ]
+                },
+                "on_match": "review"
+              }
+            ],
+            "default": "approved"
+          }
+        }
+      },
+      "rule_trace": [
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 3,
+          "timestamp": 1794568864.6975765,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 4,
+          "timestamp": 1794568864.6975944,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 5,
+          "timestamp": 1794568864.697612,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 9,
+          "timestamp": 1794568864.6977525,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 10,
+          "timestamp": 1794568864.6977654,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 80,
+              "field": "dependencies.identity.risk_score",
+              "matched": false,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 11,
+          "timestamp": 1794568864.697781,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": 10,
+                  "expected": 50,
+                  "field": "dependencies.identity.risk_score",
+                  "matched": false,
+                  "operator": "gte",
+                  "present": true
+                },
+                {
+                  "actual": 200000,
+                  "expected": 100000,
+                  "field": "input.amount",
+                  "matched": true,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": true,
+              "operator": "any"
+            },
+            "description": "Elevated risk or large amount requires human judgement",
+            "matched": true,
+            "on_match": "review",
+            "rule_id": "review_required",
+            "stage": "risk"
+          }
+        }
+      ],
+      "events": [
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 1,
+          "timestamp": 1794568864.6927662,
+          "kind": "submitted",
+          "data": {
+            "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+            "input": {
+              "age": 30,
+              "amount": 200000,
+              "applicant_id": "demo-001",
+              "consent": true,
+              "income": 60000
+            },
+            "input_hash": "ea1fb697f9fdbabcad71696aa5339e159d2b23e3949f6db171578faf161dc9c1",
+            "stage": "eligibility",
+            "state": "QUEUED",
+            "workflow_id": "loan_approval",
+            "workflow_version": 1
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 2,
+          "timestamp": 1794568864.6975365,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "QUEUED"
+            },
+            "reason": "execution_started",
+            "to": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 3,
+          "timestamp": 1794568864.6975765,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 4,
+          "timestamp": 1794568864.6975944,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 5,
+          "timestamp": 1794568864.697612,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 6,
+          "timestamp": 1794568864.6976972,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "identity",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 7,
+          "timestamp": 1794568864.6977203,
+          "kind": "dependency_succeeded",
+          "data": {
+            "adapter": "simulated_verification",
+            "attempt": 1,
+            "result": {
+              "operation_key": "80b09268-e511-4674-8c15-bd3f90491585:identity",
+              "provider": "simulated_verification",
+              "risk_score": 10,
+              "verified": true
+            },
+            "stage": "identity"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 8,
+          "timestamp": 1794568864.6977413,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "identity",
+              "state": "RUNNING"
+            },
+            "reason": "dependency_succeeded",
+            "to": {
+              "stage": "risk",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 9,
+          "timestamp": 1794568864.6977525,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 10,
+          "timestamp": 1794568864.6977654,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 80,
+              "field": "dependencies.identity.risk_score",
+              "matched": false,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 11,
+          "timestamp": 1794568864.697781,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": 10,
+                  "expected": 50,
+                  "field": "dependencies.identity.risk_score",
+                  "matched": false,
+                  "operator": "gte",
+                  "present": true
+                },
+                {
+                  "actual": 200000,
+                  "expected": 100000,
+                  "field": "input.amount",
+                  "matched": true,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": true,
+              "operator": "any"
+            },
+            "description": "Elevated risk or large amount requires human judgement",
+            "matched": true,
+            "on_match": "review",
+            "rule_id": "review_required",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 12,
+          "timestamp": 1794568864.6978009,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "risk",
+              "state": "RUNNING"
+            },
+            "reason": "rule:review_required",
+            "to": {
+              "stage": "review",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 13,
+          "timestamp": 1794568864.697817,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "review",
+              "state": "RUNNING"
+            },
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "to": {
+              "stage": "review",
+              "state": "MANUAL_REVIEW"
+            }
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 14,
+          "timestamp": 1794568864.7106266,
+          "kind": "manual_resolved",
+          "data": {
+            "actor": "demo-reviewer",
+            "decision": "approve",
+            "reason": "Verified supporting documents",
+            "stage": "review"
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 15,
+          "timestamp": 1794568864.7107046,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "review",
+              "state": "MANUAL_REVIEW"
+            },
+            "reason": "manual_resolution",
+            "to": {
+              "stage": "approved",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "80b09268-e511-4674-8c15-bd3f90491585",
+          "sequence": 16,
+          "timestamp": 1794568864.7133412,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "approved",
+              "state": "RUNNING"
+            },
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved",
+            "to": {
+              "stage": "approved",
+              "state": "APPROVED"
+            }
+          }
+        }
+      ]
+    },
+    "retry_pending": {
+      "request": {
+        "id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+        "input_hash": "61d8ba1d2f072e4660b4251fb64d60a7640a24b678526a794b7a6baa1a32f1d6",
+        "workflow_id": "loan_approval",
+        "workflow_version": 1,
+        "state": "RETRY_PENDING",
+        "stage": "identity",
+        "payload": {
+          "age": 30,
+          "amount": 25000,
+          "applicant_id": "demo-001",
+          "consent": true,
+          "income": 60000,
+          "simulation": {
+            "fail_until": 1
+          }
+        },
+        "dependencies": {},
+        "attempts": {
+          "identity": 1
+        },
+        "next_attempt_at": 1794568866.730137,
+        "created_at": 1794568864.725327,
+        "updated_at": 1794568864.7301383
+      },
+      "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+      "workflow": {
+        "workflow_id": "loan_approval",
+        "version": 1,
+        "description": "Loan eligibility with identity verification and risk review",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "age": {
+              "maximum": 130,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "amount": {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            },
+            "applicant_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            "consent": {
+              "type": "boolean"
+            },
+            "income": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            "simulation": {
+              "additionalProperties": false,
+              "properties": {
+                "fail_until": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permanent_failure": {
+                  "type": "boolean"
+                },
+                "risk_score": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "applicant_id",
+            "age",
+            "income",
+            "amount",
+            "consent"
+          ],
+          "type": "object"
+        },
+        "start": "eligibility",
+        "retry": {
+          "max_attempts": 3,
+          "base_delay_seconds": 2,
+          "max_delay_seconds": 30
+        },
+        "stages": {
+          "approved": {
+            "type": "terminal",
+            "outcome": "APPROVED",
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved"
+          },
+          "eligibility": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "missing_consent",
+                "description": "Explicit consent is mandatory",
+                "condition": {
+                  "field": "input.consent",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "underage",
+                "description": "Applicant must be at least 18 years old",
+                "condition": {
+                  "field": "input.age",
+                  "op": "lt",
+                  "value": 18
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "income_below_minimum",
+                "description": "Annual income must be at least 30000",
+                "condition": {
+                  "field": "input.income",
+                  "op": "lt",
+                  "value": 30000
+                },
+                "on_match": "rejected"
+              }
+            ],
+            "default": "identity"
+          },
+          "identity": {
+            "type": "dependency",
+            "adapter": "simulated_verification",
+            "next": "risk",
+            "on_failure": "review"
+          },
+          "rejected": {
+            "type": "terminal",
+            "outcome": "REJECTED",
+            "reason": "A blocking rule matched or reviewer rejected; consult rule and review audit events"
+          },
+          "review": {
+            "type": "manual",
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "decisions": {
+              "approve": "approved",
+              "reject": "rejected"
+            }
+          },
+          "risk": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "identity_failed",
+                "description": "Unverified identity cannot be approved",
+                "condition": {
+                  "field": "dependencies.identity.verified",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "high_risk",
+                "description": "Risk scores of 80 or above require rejection",
+                "condition": {
+                  "field": "dependencies.identity.risk_score",
+                  "op": "gte",
+                  "value": 80
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "review_required",
+                "description": "Elevated risk or large amount requires human judgement",
+                "condition": {
+                  "any": [
+                    {
+                      "field": "dependencies.identity.risk_score",
+                      "op": "gte",
+                      "value": 50
+                    },
+                    {
+                      "field": "input.amount",
+                      "op": "gt",
+                      "value": 100000
+                    }
+                  ]
+                },
+                "on_match": "review"
+              }
+            ],
+            "default": "approved"
+          }
+        }
+      },
+      "rule_trace": [
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 3,
+          "timestamp": 1794568864.730005,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 4,
+          "timestamp": 1794568864.730045,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 5,
+          "timestamp": 1794568864.7300568,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        }
+      ],
+      "events": [
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 1,
+          "timestamp": 1794568864.725327,
+          "kind": "submitted",
+          "data": {
+            "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+            "input": {
+              "age": 30,
+              "amount": 25000,
+              "applicant_id": "demo-001",
+              "consent": true,
+              "income": 60000,
+              "simulation": {
+                "fail_until": 1
+              }
+            },
+            "input_hash": "61d8ba1d2f072e4660b4251fb64d60a7640a24b678526a794b7a6baa1a32f1d6",
+            "stage": "eligibility",
+            "state": "QUEUED",
+            "workflow_id": "loan_approval",
+            "workflow_version": 1
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 2,
+          "timestamp": 1794568864.7299664,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "QUEUED"
+            },
+            "reason": "execution_started",
+            "to": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 3,
+          "timestamp": 1794568864.730005,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 4,
+          "timestamp": 1794568864.730045,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 5,
+          "timestamp": 1794568864.7300568,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 6,
+          "timestamp": 1794568864.7300768,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "identity",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 7,
+          "timestamp": 1794568864.7300973,
+          "kind": "dependency_failed",
+          "data": {
+            "adapter": "simulated_verification",
+            "attempt": 1,
+            "code": "provider_unavailable",
+            "operation_key": "8d16c867-9b1f-40f3-8b6c-ebb35259afad:identity",
+            "stage": "identity",
+            "transient": true
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 8,
+          "timestamp": 1794568864.7301502,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "identity",
+              "state": "RUNNING"
+            },
+            "reason": "transient_failure",
+            "to": {
+              "stage": "identity",
+              "state": "RETRY_PENDING"
+            }
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 9,
+          "timestamp": 1794568864.7301574,
+          "kind": "retry_scheduled",
+          "data": {
+            "attempt": 1,
+            "delay_seconds": 2,
+            "next_attempt_at": 1794568866.730137,
+            "stage": "identity"
+          }
+        }
+      ]
+    },
+    "retry_recovered": {
+      "request": {
+        "id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+        "input_hash": "61d8ba1d2f072e4660b4251fb64d60a7640a24b678526a794b7a6baa1a32f1d6",
+        "workflow_id": "loan_approval",
+        "workflow_version": 1,
+        "state": "APPROVED",
+        "stage": "approved",
+        "payload": {
+          "age": 30,
+          "amount": 25000,
+          "applicant_id": "demo-001",
+          "consent": true,
+          "income": 60000,
+          "simulation": {
+            "fail_until": 1
+          }
+        },
+        "dependencies": {
+          "identity": {
+            "operation_key": "8d16c867-9b1f-40f3-8b6c-ebb35259afad:identity",
+            "provider": "simulated_verification",
+            "risk_score": 10,
+            "verified": true
+          }
+        },
+        "attempts": {
+          "identity": 2
+        },
+        "next_attempt_at": null,
+        "created_at": 1794568864.725327,
+        "updated_at": 1794568866.8552814
+      },
+      "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+      "workflow": {
+        "workflow_id": "loan_approval",
+        "version": 1,
+        "description": "Loan eligibility with identity verification and risk review",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "age": {
+              "maximum": 130,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "amount": {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            },
+            "applicant_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            "consent": {
+              "type": "boolean"
+            },
+            "income": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            "simulation": {
+              "additionalProperties": false,
+              "properties": {
+                "fail_until": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permanent_failure": {
+                  "type": "boolean"
+                },
+                "risk_score": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "applicant_id",
+            "age",
+            "income",
+            "amount",
+            "consent"
+          ],
+          "type": "object"
+        },
+        "start": "eligibility",
+        "retry": {
+          "max_attempts": 3,
+          "base_delay_seconds": 2,
+          "max_delay_seconds": 30
+        },
+        "stages": {
+          "approved": {
+            "type": "terminal",
+            "outcome": "APPROVED",
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved"
+          },
+          "eligibility": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "missing_consent",
+                "description": "Explicit consent is mandatory",
+                "condition": {
+                  "field": "input.consent",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "underage",
+                "description": "Applicant must be at least 18 years old",
+                "condition": {
+                  "field": "input.age",
+                  "op": "lt",
+                  "value": 18
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "income_below_minimum",
+                "description": "Annual income must be at least 30000",
+                "condition": {
+                  "field": "input.income",
+                  "op": "lt",
+                  "value": 30000
+                },
+                "on_match": "rejected"
+              }
+            ],
+            "default": "identity"
+          },
+          "identity": {
+            "type": "dependency",
+            "adapter": "simulated_verification",
+            "next": "risk",
+            "on_failure": "review"
+          },
+          "rejected": {
+            "type": "terminal",
+            "outcome": "REJECTED",
+            "reason": "A blocking rule matched or reviewer rejected; consult rule and review audit events"
+          },
+          "review": {
+            "type": "manual",
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "decisions": {
+              "approve": "approved",
+              "reject": "rejected"
+            }
+          },
+          "risk": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "identity_failed",
+                "description": "Unverified identity cannot be approved",
+                "condition": {
+                  "field": "dependencies.identity.verified",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "high_risk",
+                "description": "Risk scores of 80 or above require rejection",
+                "condition": {
+                  "field": "dependencies.identity.risk_score",
+                  "op": "gte",
+                  "value": 80
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "review_required",
+                "description": "Elevated risk or large amount requires human judgement",
+                "condition": {
+                  "any": [
+                    {
+                      "field": "dependencies.identity.risk_score",
+                      "op": "gte",
+                      "value": 50
+                    },
+                    {
+                      "field": "input.amount",
+                      "op": "gt",
+                      "value": 100000
+                    }
+                  ]
+                },
+                "on_match": "review"
+              }
+            ],
+            "default": "approved"
+          }
+        }
+      },
+      "rule_trace": [
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 3,
+          "timestamp": 1794568864.730005,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 4,
+          "timestamp": 1794568864.730045,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 5,
+          "timestamp": 1794568864.7300568,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 13,
+          "timestamp": 1794568866.855218,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 14,
+          "timestamp": 1794568866.8552344,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 80,
+              "field": "dependencies.identity.risk_score",
+              "matched": false,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 15,
+          "timestamp": 1794568866.8552518,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": 10,
+                  "expected": 50,
+                  "field": "dependencies.identity.risk_score",
+                  "matched": false,
+                  "operator": "gte",
+                  "present": true
+                },
+                {
+                  "actual": 25000,
+                  "expected": 100000,
+                  "field": "input.amount",
+                  "matched": false,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": false,
+              "operator": "any"
+            },
+            "description": "Elevated risk or large amount requires human judgement",
+            "matched": false,
+            "on_match": "review",
+            "rule_id": "review_required",
+            "stage": "risk"
+          }
+        }
+      ],
+      "events": [
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 1,
+          "timestamp": 1794568864.725327,
+          "kind": "submitted",
+          "data": {
+            "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+            "input": {
+              "age": 30,
+              "amount": 25000,
+              "applicant_id": "demo-001",
+              "consent": true,
+              "income": 60000,
+              "simulation": {
+                "fail_until": 1
+              }
+            },
+            "input_hash": "61d8ba1d2f072e4660b4251fb64d60a7640a24b678526a794b7a6baa1a32f1d6",
+            "stage": "eligibility",
+            "state": "QUEUED",
+            "workflow_id": "loan_approval",
+            "workflow_version": 1
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 2,
+          "timestamp": 1794568864.7299664,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "QUEUED"
+            },
+            "reason": "execution_started",
+            "to": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 3,
+          "timestamp": 1794568864.730005,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 4,
+          "timestamp": 1794568864.730045,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 5,
+          "timestamp": 1794568864.7300568,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 6,
+          "timestamp": 1794568864.7300768,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "identity",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 7,
+          "timestamp": 1794568864.7300973,
+          "kind": "dependency_failed",
+          "data": {
+            "adapter": "simulated_verification",
+            "attempt": 1,
+            "code": "provider_unavailable",
+            "operation_key": "8d16c867-9b1f-40f3-8b6c-ebb35259afad:identity",
+            "stage": "identity",
+            "transient": true
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 8,
+          "timestamp": 1794568864.7301502,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "identity",
+              "state": "RUNNING"
+            },
+            "reason": "transient_failure",
+            "to": {
+              "stage": "identity",
+              "state": "RETRY_PENDING"
+            }
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 9,
+          "timestamp": 1794568864.7301574,
+          "kind": "retry_scheduled",
+          "data": {
+            "attempt": 1,
+            "delay_seconds": 2,
+            "next_attempt_at": 1794568866.730137,
+            "stage": "identity"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 10,
+          "timestamp": 1794568866.855087,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "identity",
+              "state": "RETRY_PENDING"
+            },
+            "reason": "execution_started",
+            "to": {
+              "stage": "identity",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 11,
+          "timestamp": 1794568866.8551686,
+          "kind": "dependency_succeeded",
+          "data": {
+            "adapter": "simulated_verification",
+            "attempt": 2,
+            "result": {
+              "operation_key": "8d16c867-9b1f-40f3-8b6c-ebb35259afad:identity",
+              "provider": "simulated_verification",
+              "risk_score": 10,
+              "verified": true
+            },
+            "stage": "identity"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 12,
+          "timestamp": 1794568866.8551993,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "identity",
+              "state": "RUNNING"
+            },
+            "reason": "dependency_succeeded",
+            "to": {
+              "stage": "risk",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 13,
+          "timestamp": 1794568866.855218,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 14,
+          "timestamp": 1794568866.8552344,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 80,
+              "field": "dependencies.identity.risk_score",
+              "matched": false,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 15,
+          "timestamp": 1794568866.8552518,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": 10,
+                  "expected": 50,
+                  "field": "dependencies.identity.risk_score",
+                  "matched": false,
+                  "operator": "gte",
+                  "present": true
+                },
+                {
+                  "actual": 25000,
+                  "expected": 100000,
+                  "field": "input.amount",
+                  "matched": false,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": false,
+              "operator": "any"
+            },
+            "description": "Elevated risk or large amount requires human judgement",
+            "matched": false,
+            "on_match": "review",
+            "rule_id": "review_required",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 16,
+          "timestamp": 1794568866.8552737,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "risk",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "approved",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "8d16c867-9b1f-40f3-8b6c-ebb35259afad",
+          "sequence": 17,
+          "timestamp": 1794568866.8552904,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "approved",
+              "state": "RUNNING"
+            },
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved",
+            "to": {
+              "stage": "approved",
+              "state": "APPROVED"
+            }
+          }
+        }
+      ]
+    },
+    "permanent_failure": {
+      "request": {
+        "id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+        "input_hash": "8e410ab85b8c44391b7121ef91c2723b745963ffe5618bff7d086af401dc5024",
+        "workflow_id": "loan_approval",
+        "workflow_version": 1,
+        "state": "MANUAL_REVIEW",
+        "stage": "review",
+        "payload": {
+          "age": 30,
+          "amount": 25000,
+          "applicant_id": "demo-001",
+          "consent": true,
+          "income": 60000,
+          "simulation": {
+            "permanent_failure": true
+          }
+        },
+        "dependencies": {},
+        "attempts": {
+          "identity": 1
+        },
+        "next_attempt_at": null,
+        "created_at": 1794568866.9868014,
+        "updated_at": 1794568866.992952
+      },
+      "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+      "workflow": {
+        "workflow_id": "loan_approval",
+        "version": 1,
+        "description": "Loan eligibility with identity verification and risk review",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "age": {
+              "maximum": 130,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "amount": {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            },
+            "applicant_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            "consent": {
+              "type": "boolean"
+            },
+            "income": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            "simulation": {
+              "additionalProperties": false,
+              "properties": {
+                "fail_until": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permanent_failure": {
+                  "type": "boolean"
+                },
+                "risk_score": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "applicant_id",
+            "age",
+            "income",
+            "amount",
+            "consent"
+          ],
+          "type": "object"
+        },
+        "start": "eligibility",
+        "retry": {
+          "max_attempts": 3,
+          "base_delay_seconds": 2,
+          "max_delay_seconds": 30
+        },
+        "stages": {
+          "approved": {
+            "type": "terminal",
+            "outcome": "APPROVED",
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved"
+          },
+          "eligibility": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "missing_consent",
+                "description": "Explicit consent is mandatory",
+                "condition": {
+                  "field": "input.consent",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "underage",
+                "description": "Applicant must be at least 18 years old",
+                "condition": {
+                  "field": "input.age",
+                  "op": "lt",
+                  "value": 18
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "income_below_minimum",
+                "description": "Annual income must be at least 30000",
+                "condition": {
+                  "field": "input.income",
+                  "op": "lt",
+                  "value": 30000
+                },
+                "on_match": "rejected"
+              }
+            ],
+            "default": "identity"
+          },
+          "identity": {
+            "type": "dependency",
+            "adapter": "simulated_verification",
+            "next": "risk",
+            "on_failure": "review"
+          },
+          "rejected": {
+            "type": "terminal",
+            "outcome": "REJECTED",
+            "reason": "A blocking rule matched or reviewer rejected; consult rule and review audit events"
+          },
+          "review": {
+            "type": "manual",
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "decisions": {
+              "approve": "approved",
+              "reject": "rejected"
+            }
+          },
+          "risk": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "identity_failed",
+                "description": "Unverified identity cannot be approved",
+                "condition": {
+                  "field": "dependencies.identity.verified",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "high_risk",
+                "description": "Risk scores of 80 or above require rejection",
+                "condition": {
+                  "field": "dependencies.identity.risk_score",
+                  "op": "gte",
+                  "value": 80
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "review_required",
+                "description": "Elevated risk or large amount requires human judgement",
+                "condition": {
+                  "any": [
+                    {
+                      "field": "dependencies.identity.risk_score",
+                      "op": "gte",
+                      "value": 50
+                    },
+                    {
+                      "field": "input.amount",
+                      "op": "gt",
+                      "value": 100000
+                    }
+                  ]
+                },
+                "on_match": "review"
+              }
+            ],
+            "default": "approved"
+          }
+        }
+      },
+      "rule_trace": [
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 3,
+          "timestamp": 1794568866.9928548,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 4,
+          "timestamp": 1794568866.9928708,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 5,
+          "timestamp": 1794568866.992883,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        }
+      ],
+      "events": [
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 1,
+          "timestamp": 1794568866.9868014,
+          "kind": "submitted",
+          "data": {
+            "config_hash": "5509f93e76484ed63a74510009ed2b1833ba1fe13013699ea54f14225d1f8e14",
+            "input": {
+              "age": 30,
+              "amount": 25000,
+              "applicant_id": "demo-001",
+              "consent": true,
+              "income": 60000,
+              "simulation": {
+                "permanent_failure": true
+              }
+            },
+            "input_hash": "8e410ab85b8c44391b7121ef91c2723b745963ffe5618bff7d086af401dc5024",
+            "stage": "eligibility",
+            "state": "QUEUED",
+            "workflow_id": "loan_approval",
+            "workflow_version": 1
+          }
+        },
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 2,
+          "timestamp": 1794568866.9928079,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "QUEUED"
+            },
+            "reason": "execution_started",
+            "to": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 3,
+          "timestamp": 1794568866.9928548,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 4,
+          "timestamp": 1794568866.9928708,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 5,
+          "timestamp": 1794568866.992883,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 6,
+          "timestamp": 1794568866.992902,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "identity",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 7,
+          "timestamp": 1794568866.992924,
+          "kind": "dependency_failed",
+          "data": {
+            "adapter": "simulated_verification",
+            "attempt": 1,
+            "code": "provider_permanent_error",
+            "operation_key": "e70c8fa4-3a22-435e-9b7b-877beb3c227a:identity",
+            "stage": "identity",
+            "transient": false
+          }
+        },
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 8,
+          "timestamp": 1794568866.9929435,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "identity",
+              "state": "RUNNING"
+            },
+            "reason": "permanent_dependency_failure",
+            "to": {
+              "stage": "review",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "e70c8fa4-3a22-435e-9b7b-877beb3c227a",
+          "sequence": 9,
+          "timestamp": 1794568866.9929602,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "review",
+              "state": "RUNNING"
+            },
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "to": {
+              "stage": "review",
+              "state": "MANUAL_REVIEW"
+            }
+          }
+        }
+      ]
+    },
+    "vendor_approval": {
+      "request": {
+        "id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+        "input_hash": "8fafa92d3ceeee33c1305d5784ecd61e1405f329f7fe08e8a32ecc533b8ac828",
+        "workflow_id": "vendor_onboarding",
+        "workflow_version": 1,
+        "state": "APPROVED",
+        "stage": "approved",
+        "payload": {
+          "annual_spend": 20000,
+          "country": "IN",
+          "documents": true,
+          "vendor_id": "demo-vendor"
+        },
+        "dependencies": {
+          "verification": {
+            "operation_key": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151:verification",
+            "provider": "simulated_verification",
+            "risk_score": 10,
+            "verified": true
+          }
+        },
+        "attempts": {
+          "verification": 1
+        },
+        "next_attempt_at": null,
+        "created_at": 1794568867.0041409,
+        "updated_at": 1794568867.008525
+      },
+      "config_hash": "edd93d4c77ae5471d72c77aec946d8a8793117d5d83d5cd4ca330a4c35457ff5",
+      "workflow": {
+        "workflow_id": "vendor_onboarding",
+        "version": 1,
+        "description": "Vendor registration with documents and country risk checks",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "annual_spend": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            "country": {
+              "enum": [
+                "IN",
+                "US",
+                "GB",
+                "OTHER"
+              ],
+              "type": "string"
+            },
+            "documents": {
+              "type": "boolean"
+            },
+            "simulation": {
+              "additionalProperties": false,
+              "properties": {
+                "fail_until": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permanent_failure": {
+                  "type": "boolean"
+                },
+                "risk_score": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "vendor_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "vendor_id",
+            "country",
+            "documents",
+            "annual_spend"
+          ],
+          "type": "object"
+        },
+        "start": "documents",
+        "retry": {
+          "max_attempts": 2,
+          "base_delay_seconds": 2,
+          "max_delay_seconds": 10
+        },
+        "stages": {
+          "approved": {
+            "type": "terminal",
+            "outcome": "APPROVED",
+            "reason": "Vendor meets configured requirements or reviewer approved"
+          },
+          "assessment": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "verification_failed",
+                "description": "Verification must succeed",
+                "condition": {
+                  "field": "dependencies.verification.verified",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "enhanced_due_diligence",
+                "description": "Unlisted countries or large contracts require review",
+                "condition": {
+                  "any": [
+                    {
+                      "field": "input.country",
+                      "op": "not_in",
+                      "value": [
+                        "IN",
+                        "US",
+                        "GB"
+                      ]
+                    },
+                    {
+                      "field": "input.annual_spend",
+                      "op": "gt",
+                      "value": 500000
+                    }
+                  ]
+                },
+                "on_match": "review"
+              }
+            ],
+            "default": "approved"
+          },
+          "documents": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "documents_missing",
+                "description": "Registration documents are required",
+                "condition": {
+                  "field": "input.documents",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              }
+            ],
+            "default": "verification"
+          },
+          "rejected": {
+            "type": "terminal",
+            "outcome": "REJECTED",
+            "reason": "Vendor failed a mandatory rule or reviewer rejected"
+          },
+          "review": {
+            "type": "manual",
+            "reason": "Enhanced vendor due diligence or verification outage",
+            "decisions": {
+              "approve": "approved",
+              "reject": "rejected"
+            }
+          },
+          "verification": {
+            "type": "dependency",
+            "adapter": "simulated_verification",
+            "next": "assessment",
+            "on_failure": "review"
+          }
+        }
+      },
+      "rule_trace": [
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 3,
+          "timestamp": 1794568867.008404,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.documents",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Registration documents are required",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "documents_missing",
+            "stage": "documents"
+          }
+        },
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 7,
+          "timestamp": 1794568867.0084748,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.verification.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Verification must succeed",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "verification_failed",
+            "stage": "assessment"
+          }
+        },
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 8,
+          "timestamp": 1794568867.008495,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": "IN",
+                  "expected": [
+                    "IN",
+                    "US",
+                    "GB"
+                  ],
+                  "field": "input.country",
+                  "matched": false,
+                  "operator": "not_in",
+                  "present": true
+                },
+                {
+                  "actual": 20000,
+                  "expected": 500000,
+                  "field": "input.annual_spend",
+                  "matched": false,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": false,
+              "operator": "any"
+            },
+            "description": "Unlisted countries or large contracts require review",
+            "matched": false,
+            "on_match": "review",
+            "rule_id": "enhanced_due_diligence",
+            "stage": "assessment"
+          }
+        }
+      ],
+      "events": [
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 1,
+          "timestamp": 1794568867.0041409,
+          "kind": "submitted",
+          "data": {
+            "config_hash": "edd93d4c77ae5471d72c77aec946d8a8793117d5d83d5cd4ca330a4c35457ff5",
+            "input": {
+              "annual_spend": 20000,
+              "country": "IN",
+              "documents": true,
+              "vendor_id": "demo-vendor"
+            },
+            "input_hash": "8fafa92d3ceeee33c1305d5784ecd61e1405f329f7fe08e8a32ecc533b8ac828",
+            "stage": "documents",
+            "state": "QUEUED",
+            "workflow_id": "vendor_onboarding",
+            "workflow_version": 1
+          }
+        },
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 2,
+          "timestamp": 1794568867.0083635,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "documents",
+              "state": "QUEUED"
+            },
+            "reason": "execution_started",
+            "to": {
+              "stage": "documents",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 3,
+          "timestamp": 1794568867.008404,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.documents",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Registration documents are required",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "documents_missing",
+            "stage": "documents"
+          }
+        },
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 4,
+          "timestamp": 1794568867.0084274,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "documents",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "verification",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 5,
+          "timestamp": 1794568867.0084438,
+          "kind": "dependency_succeeded",
+          "data": {
+            "adapter": "simulated_verification",
+            "attempt": 1,
+            "result": {
+              "operation_key": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151:verification",
+              "provider": "simulated_verification",
+              "risk_score": 10,
+              "verified": true
+            },
+            "stage": "verification"
+          }
+        },
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 6,
+          "timestamp": 1794568867.0084648,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "verification",
+              "state": "RUNNING"
+            },
+            "reason": "dependency_succeeded",
+            "to": {
+              "stage": "assessment",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 7,
+          "timestamp": 1794568867.0084748,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.verification.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Verification must succeed",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "verification_failed",
+            "stage": "assessment"
+          }
+        },
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 8,
+          "timestamp": 1794568867.008495,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": "IN",
+                  "expected": [
+                    "IN",
+                    "US",
+                    "GB"
+                  ],
+                  "field": "input.country",
+                  "matched": false,
+                  "operator": "not_in",
+                  "present": true
+                },
+                {
+                  "actual": 20000,
+                  "expected": 500000,
+                  "field": "input.annual_spend",
+                  "matched": false,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": false,
+              "operator": "any"
+            },
+            "description": "Unlisted countries or large contracts require review",
+            "matched": false,
+            "on_match": "review",
+            "rule_id": "enhanced_due_diligence",
+            "stage": "assessment"
+          }
+        },
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 9,
+          "timestamp": 1794568867.0085166,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "assessment",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "approved",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "8587e2b1-2c8c-47ad-b3a6-bfbe33910151",
+          "sequence": 10,
+          "timestamp": 1794568867.0085337,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "approved",
+              "state": "RUNNING"
+            },
+            "reason": "Vendor meets configured requirements or reviewer approved",
+            "to": {
+              "stage": "approved",
+              "state": "APPROVED"
+            }
+          }
+        }
+      ]
+    },
+    "policy_v1": {
+      "request": {
+        "id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+        "input_hash": "2bc2e5e28efefdcb5ee67c968cc177981134d5f081821ea46602ab4a87ce7f90",
+        "workflow_id": "demo_policy_change",
+        "workflow_version": 1,
+        "state": "APPROVED",
+        "stage": "approved",
+        "payload": {
+          "age": 30,
+          "amount": 25000,
+          "applicant_id": "demo-001",
+          "consent": true,
+          "income": 60000
+        },
+        "dependencies": {
+          "identity": {
+            "operation_key": "5e553f98-b223-454b-9a6b-698f02b4e422:identity",
+            "provider": "simulated_verification",
+            "risk_score": 10,
+            "verified": true
+          }
+        },
+        "attempts": {
+          "identity": 1
+        },
+        "next_attempt_at": null,
+        "created_at": 1794568867.0295837,
+        "updated_at": 1794568867.033932
+      },
+      "config_hash": "27b05b2c4ea2c0d660b616e220400137689737da96a6b99cb36d11b2675c1c42",
+      "workflow": {
+        "workflow_id": "demo_policy_change",
+        "version": 1,
+        "description": "Loan eligibility with identity verification and risk review",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "age": {
+              "maximum": 130,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "amount": {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            },
+            "applicant_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            "consent": {
+              "type": "boolean"
+            },
+            "income": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            "simulation": {
+              "additionalProperties": false,
+              "properties": {
+                "fail_until": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permanent_failure": {
+                  "type": "boolean"
+                },
+                "risk_score": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "applicant_id",
+            "age",
+            "income",
+            "amount",
+            "consent"
+          ],
+          "type": "object"
+        },
+        "start": "eligibility",
+        "retry": {
+          "max_attempts": 3,
+          "base_delay_seconds": 2,
+          "max_delay_seconds": 30
+        },
+        "stages": {
+          "approved": {
+            "type": "terminal",
+            "outcome": "APPROVED",
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved"
+          },
+          "eligibility": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "missing_consent",
+                "description": "Explicit consent is mandatory",
+                "condition": {
+                  "field": "input.consent",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "underage",
+                "description": "Applicant must be at least 18 years old",
+                "condition": {
+                  "field": "input.age",
+                  "op": "lt",
+                  "value": 18
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "income_below_minimum",
+                "description": "Annual income must be at least 30000",
+                "condition": {
+                  "field": "input.income",
+                  "op": "lt",
+                  "value": 30000
+                },
+                "on_match": "rejected"
+              }
+            ],
+            "default": "identity"
+          },
+          "identity": {
+            "type": "dependency",
+            "adapter": "simulated_verification",
+            "next": "risk",
+            "on_failure": "review"
+          },
+          "rejected": {
+            "type": "terminal",
+            "outcome": "REJECTED",
+            "reason": "A blocking rule matched or reviewer rejected; consult rule and review audit events"
+          },
+          "review": {
+            "type": "manual",
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "decisions": {
+              "approve": "approved",
+              "reject": "rejected"
+            }
+          },
+          "risk": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "identity_failed",
+                "description": "Unverified identity cannot be approved",
+                "condition": {
+                  "field": "dependencies.identity.verified",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "high_risk",
+                "description": "Risk scores of 80 or above require rejection",
+                "condition": {
+                  "field": "dependencies.identity.risk_score",
+                  "op": "gte",
+                  "value": 80
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "review_required",
+                "description": "Elevated risk or large amount requires human judgement",
+                "condition": {
+                  "any": [
+                    {
+                      "field": "dependencies.identity.risk_score",
+                      "op": "gte",
+                      "value": 50
+                    },
+                    {
+                      "field": "input.amount",
+                      "op": "gt",
+                      "value": 100000
+                    }
+                  ]
+                },
+                "on_match": "review"
+              }
+            ],
+            "default": "approved"
+          }
+        }
+      },
+      "rule_trace": [
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 3,
+          "timestamp": 1794568867.0337963,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 4,
+          "timestamp": 1794568867.033811,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 5,
+          "timestamp": 1794568867.0338225,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 9,
+          "timestamp": 1794568867.033886,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 10,
+          "timestamp": 1794568867.0338955,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 80,
+              "field": "dependencies.identity.risk_score",
+              "matched": false,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 11,
+          "timestamp": 1794568867.0339077,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": 10,
+                  "expected": 50,
+                  "field": "dependencies.identity.risk_score",
+                  "matched": false,
+                  "operator": "gte",
+                  "present": true
+                },
+                {
+                  "actual": 25000,
+                  "expected": 100000,
+                  "field": "input.amount",
+                  "matched": false,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": false,
+              "operator": "any"
+            },
+            "description": "Elevated risk or large amount requires human judgement",
+            "matched": false,
+            "on_match": "review",
+            "rule_id": "review_required",
+            "stage": "risk"
+          }
+        }
+      ],
+      "events": [
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 1,
+          "timestamp": 1794568867.0295837,
+          "kind": "submitted",
+          "data": {
+            "config_hash": "27b05b2c4ea2c0d660b616e220400137689737da96a6b99cb36d11b2675c1c42",
+            "input": {
+              "age": 30,
+              "amount": 25000,
+              "applicant_id": "demo-001",
+              "consent": true,
+              "income": 60000
+            },
+            "input_hash": "2bc2e5e28efefdcb5ee67c968cc177981134d5f081821ea46602ab4a87ce7f90",
+            "stage": "eligibility",
+            "state": "QUEUED",
+            "workflow_id": "demo_policy_change",
+            "workflow_version": 1
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 2,
+          "timestamp": 1794568867.033757,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "QUEUED"
+            },
+            "reason": "execution_started",
+            "to": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 3,
+          "timestamp": 1794568867.0337963,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 4,
+          "timestamp": 1794568867.033811,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 5,
+          "timestamp": 1794568867.0338225,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 6,
+          "timestamp": 1794568867.0338416,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "identity",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 7,
+          "timestamp": 1794568867.0338569,
+          "kind": "dependency_succeeded",
+          "data": {
+            "adapter": "simulated_verification",
+            "attempt": 1,
+            "result": {
+              "operation_key": "5e553f98-b223-454b-9a6b-698f02b4e422:identity",
+              "provider": "simulated_verification",
+              "risk_score": 10,
+              "verified": true
+            },
+            "stage": "identity"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 8,
+          "timestamp": 1794568867.033876,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "identity",
+              "state": "RUNNING"
+            },
+            "reason": "dependency_succeeded",
+            "to": {
+              "stage": "risk",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 9,
+          "timestamp": 1794568867.033886,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 10,
+          "timestamp": 1794568867.0338955,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 80,
+              "field": "dependencies.identity.risk_score",
+              "matched": false,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 11,
+          "timestamp": 1794568867.0339077,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "children": [
+                {
+                  "actual": 10,
+                  "expected": 50,
+                  "field": "dependencies.identity.risk_score",
+                  "matched": false,
+                  "operator": "gte",
+                  "present": true
+                },
+                {
+                  "actual": 25000,
+                  "expected": 100000,
+                  "field": "input.amount",
+                  "matched": false,
+                  "operator": "gt",
+                  "present": true
+                }
+              ],
+              "matched": false,
+              "operator": "any"
+            },
+            "description": "Elevated risk or large amount requires human judgement",
+            "matched": false,
+            "on_match": "review",
+            "rule_id": "review_required",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 12,
+          "timestamp": 1794568867.0339258,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "risk",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "approved",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "5e553f98-b223-454b-9a6b-698f02b4e422",
+          "sequence": 13,
+          "timestamp": 1794568867.0339408,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "approved",
+              "state": "RUNNING"
+            },
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved",
+            "to": {
+              "stage": "approved",
+              "state": "APPROVED"
+            }
+          }
+        }
+      ]
+    },
+    "policy_v2": {
+      "request": {
+        "id": "d026e42a-f342-4783-935c-b0d213373cb9",
+        "input_hash": "2bc2e5e28efefdcb5ee67c968cc177981134d5f081821ea46602ab4a87ce7f90",
+        "workflow_id": "demo_policy_change",
+        "workflow_version": 2,
+        "state": "REJECTED",
+        "stage": "rejected",
+        "payload": {
+          "age": 30,
+          "amount": 25000,
+          "applicant_id": "demo-001",
+          "consent": true,
+          "income": 60000
+        },
+        "dependencies": {
+          "identity": {
+            "operation_key": "d026e42a-f342-4783-935c-b0d213373cb9:identity",
+            "provider": "simulated_verification",
+            "risk_score": 10,
+            "verified": true
+          }
+        },
+        "attempts": {
+          "identity": 1
+        },
+        "next_attempt_at": null,
+        "created_at": 1794568867.0461466,
+        "updated_at": 1794568867.0506558
+      },
+      "config_hash": "a218cb03b5ab2e64c625f820a7972e411a865527b6296a44446ceca9c9290107",
+      "workflow": {
+        "workflow_id": "demo_policy_change",
+        "version": 2,
+        "description": "Loan eligibility with identity verification and risk review",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "age": {
+              "maximum": 130,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "amount": {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            },
+            "applicant_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            "consent": {
+              "type": "boolean"
+            },
+            "income": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            "simulation": {
+              "additionalProperties": false,
+              "properties": {
+                "fail_until": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permanent_failure": {
+                  "type": "boolean"
+                },
+                "risk_score": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "applicant_id",
+            "age",
+            "income",
+            "amount",
+            "consent"
+          ],
+          "type": "object"
+        },
+        "start": "eligibility",
+        "retry": {
+          "max_attempts": 3,
+          "base_delay_seconds": 2,
+          "max_delay_seconds": 30
+        },
+        "stages": {
+          "approved": {
+            "type": "terminal",
+            "outcome": "APPROVED",
+            "reason": "Eligibility and configured verification requirements satisfied or reviewer approved"
+          },
+          "eligibility": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "missing_consent",
+                "description": "Explicit consent is mandatory",
+                "condition": {
+                  "field": "input.consent",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "underage",
+                "description": "Applicant must be at least 18 years old",
+                "condition": {
+                  "field": "input.age",
+                  "op": "lt",
+                  "value": 18
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "income_below_minimum",
+                "description": "Annual income must be at least 30000",
+                "condition": {
+                  "field": "input.income",
+                  "op": "lt",
+                  "value": 30000
+                },
+                "on_match": "rejected"
+              }
+            ],
+            "default": "identity"
+          },
+          "identity": {
+            "type": "dependency",
+            "adapter": "simulated_verification",
+            "next": "risk",
+            "on_failure": "review"
+          },
+          "rejected": {
+            "type": "terminal",
+            "outcome": "REJECTED",
+            "reason": "A blocking rule matched or reviewer rejected; consult rule and review audit events"
+          },
+          "review": {
+            "type": "manual",
+            "reason": "Large amount, elevated risk, or unavailable verification requires human review",
+            "decisions": {
+              "approve": "approved",
+              "reject": "rejected"
+            }
+          },
+          "risk": {
+            "type": "rules",
+            "rules": [
+              {
+                "id": "identity_failed",
+                "description": "Unverified identity cannot be approved",
+                "condition": {
+                  "field": "dependencies.identity.verified",
+                  "op": "eq",
+                  "value": false
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "high_risk",
+                "description": "Risk scores of 80 or above require rejection",
+                "condition": {
+                  "field": "dependencies.identity.risk_score",
+                  "op": "gte",
+                  "value": 5
+                },
+                "on_match": "rejected"
+              },
+              {
+                "id": "review_required",
+                "description": "Elevated risk or large amount requires human judgement",
+                "condition": {
+                  "any": [
+                    {
+                      "field": "dependencies.identity.risk_score",
+                      "op": "gte",
+                      "value": 50
+                    },
+                    {
+                      "field": "input.amount",
+                      "op": "gt",
+                      "value": 100000
+                    }
+                  ]
+                },
+                "on_match": "review"
+              }
+            ],
+            "default": "approved"
+          }
+        }
+      },
+      "rule_trace": [
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 3,
+          "timestamp": 1794568867.0504942,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 4,
+          "timestamp": 1794568867.0505085,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 5,
+          "timestamp": 1794568867.050519,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 9,
+          "timestamp": 1794568867.0506194,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 10,
+          "timestamp": 1794568867.0506308,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 5,
+              "field": "dependencies.identity.risk_score",
+              "matched": true,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": true,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        }
+      ],
+      "events": [
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 1,
+          "timestamp": 1794568867.0461466,
+          "kind": "submitted",
+          "data": {
+            "config_hash": "a218cb03b5ab2e64c625f820a7972e411a865527b6296a44446ceca9c9290107",
+            "input": {
+              "age": 30,
+              "amount": 25000,
+              "applicant_id": "demo-001",
+              "consent": true,
+              "income": 60000
+            },
+            "input_hash": "2bc2e5e28efefdcb5ee67c968cc177981134d5f081821ea46602ab4a87ce7f90",
+            "stage": "eligibility",
+            "state": "QUEUED",
+            "workflow_id": "demo_policy_change",
+            "workflow_version": 2
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 2,
+          "timestamp": 1794568867.0504556,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "QUEUED"
+            },
+            "reason": "execution_started",
+            "to": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 3,
+          "timestamp": 1794568867.0504942,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "input.consent",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Explicit consent is mandatory",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "missing_consent",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 4,
+          "timestamp": 1794568867.0505085,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 30,
+              "expected": 18,
+              "field": "input.age",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Applicant must be at least 18 years old",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "underage",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 5,
+          "timestamp": 1794568867.050519,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 60000,
+              "expected": 30000,
+              "field": "input.income",
+              "matched": false,
+              "operator": "lt",
+              "present": true
+            },
+            "description": "Annual income must be at least 30000",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "income_below_minimum",
+            "stage": "eligibility"
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 6,
+          "timestamp": 1794568867.0505385,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "eligibility",
+              "state": "RUNNING"
+            },
+            "reason": "no_rule_matched",
+            "to": {
+              "stage": "identity",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 7,
+          "timestamp": 1794568867.0505528,
+          "kind": "dependency_succeeded",
+          "data": {
+            "adapter": "simulated_verification",
+            "attempt": 1,
+            "result": {
+              "operation_key": "d026e42a-f342-4783-935c-b0d213373cb9:identity",
+              "provider": "simulated_verification",
+              "risk_score": 10,
+              "verified": true
+            },
+            "stage": "identity"
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 8,
+          "timestamp": 1794568867.050572,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "identity",
+              "state": "RUNNING"
+            },
+            "reason": "dependency_succeeded",
+            "to": {
+              "stage": "risk",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 9,
+          "timestamp": 1794568867.0506194,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": true,
+              "expected": false,
+              "field": "dependencies.identity.verified",
+              "matched": false,
+              "operator": "eq",
+              "present": true
+            },
+            "description": "Unverified identity cannot be approved",
+            "matched": false,
+            "on_match": "rejected",
+            "rule_id": "identity_failed",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 10,
+          "timestamp": 1794568867.0506308,
+          "kind": "rule_evaluated",
+          "data": {
+            "condition": {
+              "actual": 10,
+              "expected": 5,
+              "field": "dependencies.identity.risk_score",
+              "matched": true,
+              "operator": "gte",
+              "present": true
+            },
+            "description": "Risk scores of 80 or above require rejection",
+            "matched": true,
+            "on_match": "rejected",
+            "rule_id": "high_risk",
+            "stage": "risk"
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 11,
+          "timestamp": 1794568867.050649,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "risk",
+              "state": "RUNNING"
+            },
+            "reason": "rule:high_risk",
+            "to": {
+              "stage": "rejected",
+              "state": "RUNNING"
+            }
+          }
+        },
+        {
+          "request_id": "d026e42a-f342-4783-935c-b0d213373cb9",
+          "sequence": 12,
+          "timestamp": 1794568867.0506642,
+          "kind": "transition",
+          "data": {
+            "from": {
+              "stage": "rejected",
+              "state": "RUNNING"
+            },
+            "reason": "A blocking rule matched or reviewer rejected; consult rule and review audit events",
+            "to": {
+              "stage": "rejected",
+              "state": "REJECTED"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

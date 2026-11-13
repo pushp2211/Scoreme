@@ -136,10 +136,8 @@ class Workflow(StrictModel):
         def check_refs(node):
             if isinstance(node, dict):
                 for key, value in node.items():
-                    if key in {"$ref", "$dynamicRef"} and (
-                        not isinstance(value, str) or not value.startswith("#")
-                    ):
-                        raise ValueError("only local JSON Schema references are permitted")
+                    if key in {"$ref", "$dynamicRef"}:
+                        raise ValueError("schema references are unsupported; use inline schemas")
                     check_refs(value)
             elif isinstance(node, list):
                 for child in node:

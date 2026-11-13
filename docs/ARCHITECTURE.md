@@ -70,7 +70,7 @@ application guarantees, not tamper-proof storage against a database administrato
 
 Because the adapter is an in-process simulation, its execution occurs under the
 write transaction. This avoids a misleading claim of exactly-once external effects.
-A real remote adapter MUST use an outbox, durable attempt/lease records, timeouts and
+A real remote adapter must use an outbox, durable attempt/lease records, timeouts and
 an idempotency token such as `request_id:stage_id`; release the database lock around
 network I/O. Delivery then becomes at-least-once with downstream deduplication.
 
@@ -83,6 +83,9 @@ terminate; cycles are rejected rather than relying on a runtime loop guard alone
 Rules support typed comparisons, presence, membership, and nested all/any/not groups.
 There is no eval, arbitrary Python, URL fetching, template execution or plugin loading.
 Missing fields fail comparisons except `exists` and `missing`; booleans are not numbers.
+Input schemas are inline JSON Schema Draft 2020-12 objects. References are rejected
+to avoid unresolved, recursive or network-fetched schemas. The `simulation` input
+field is reserved by the platform, validated separately, and intended only for demos.
 
 ## Trade-offs and scaling
 
@@ -97,7 +100,7 @@ The worker polls durable state; a queue is an optimization, not the source of tr
 No retry jitter is used so tests and examples are deterministic; use jitter and
 per-provider concurrency limits with real dependencies. Audit includes full inputs
 to support reproducible decisions; production needs PII minimization, encryption,
-retention policies and scoped access. The optional API token is shared authentication,
+retention policies and scoped access. The optional API token protects all endpoints, including health and docs. It is shared authentication,
 not RBAC: reviewer and workflow-author roles need separate identities in production.
 
 ## Requirement traceability

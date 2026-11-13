@@ -1,5 +1,6 @@
 """Durable, configuration-driven workflow orchestration."""
 
+import logging
 import time
 import uuid
 from collections.abc import Callable
@@ -19,6 +20,8 @@ from decisionforge.dependencies import DependencyFailure, Simulation, verify
 from decisionforge.errors import DomainError
 from decisionforge.rules import evaluate
 from decisionforge.storage import Store
+
+logger = logging.getLogger(__name__)
 
 
 class Engine:
@@ -127,7 +130,8 @@ class Engine:
             connection, request["workflow_id"], request["workflow_version"]
         )
         request["next_attempt_at"] = None
-        self.transition(connection, request, "RUNNING", request["stage"], "execution_started")
+        if request["state"] != "RUNNING":
+            self.transition(connection, request, "RUNNING", request["stage"], "execution_started")
         for _ in range(len(workflow.stages) + 1):
             name = request["stage"]
             stage = workflow.stages[name]
@@ -268,7 +272,10 @@ class Engine:
                 (self.clock(), limit),
             ).fetchall()
         for row in rows:
-            self.run(row["id"])
+            try:
+                self.run(row["id"])
+            except Exception:
+                logger.exception("Execution rolled back for request %s", row["id"])
         return len(rows)
 
     def explain(self, request_id: str) -> dict:
