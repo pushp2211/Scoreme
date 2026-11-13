@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, SchemaError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Identifier = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
@@ -47,6 +47,8 @@ def validate_condition(condition: Any, depth: int = 0) -> None:
                 validate_condition(child, depth + 1)
         return
     op = condition.get("op")
+    if not isinstance(op, str):
+        raise ValueError("operator must be a string")
     expected_keys = {"field", "op"} if op in {"exists", "missing"} else {"field", "op", "value"}
     if set(condition) != expected_keys or op not in OPS:
         raise ValueError("invalid predicate shape or operator")
@@ -126,7 +128,10 @@ class Workflow(StrictModel):
 
     @model_validator(mode="after")
     def check_graph(self):
-        Draft202012Validator.check_schema(self.input_schema)
+        try:
+            Draft202012Validator.check_schema(self.input_schema)
+        except SchemaError as exc:
+            raise ValueError("invalid input JSON Schema") from exc
 
         def check_refs(node):
             if isinstance(node, dict):
