@@ -1,5 +1,91 @@
 # DecisionForge · Scoreme assignment
 
+## Results
+
+The assignment implementation is complete. Results below were verified for
+implementation commit [`a3b88e1`](https://github.com/pushp2211/Scoreme/commit/a3b88e10215732224be3703fda9e575058aca524)
+on **13 November 2026** using Python 3.12.14.
+
+| Validation | Result |
+| --- | --- |
+| Automated tests | **89 passed** |
+| Statement coverage | **99.67%** (598/600 statements; CI requires at least 95%) |
+| Live HTTP acceptance demo | **15 checks passed**, using separate API and worker processes |
+| Lint and formatting | Passed |
+| Packaging | Wheel and source archive built; 89 tests also passed from the extracted archive |
+| GitHub Actions | [Verified successful run](https://github.com/pushp2211/Scoreme/actions/runs/43417266133) |
+
+Verified scenarios include approval, rejection, manual review, transient/permanent
+dependency failures, retry exhaustion, duplicate requests, concurrent execution,
+restart recovery, partial-save rollback, audit history and rule/schema changes with
+version pinning. Both loan approval and vendor onboarding run through the same engine.
+The external verification provider is simulated, as required by the assignment.
+
+See the [detailed results report](docs/RESULTS.md),
+[decision explanations](docs/EXAMPLES.md), and
+[recorded input/trace/output evidence](docs/examples/live-demo.json).
+
+## How to validate
+
+### 1. Check the independent CI run
+
+Open [GitHub Actions](https://github.com/pushp2211/Scoreme/actions), select the latest
+**Verify DecisionForge** run for the branch/commit under review, and confirm it is
+green. Expand the test, coverage, build and HTTP demo steps to inspect their output.
+The run also provides downloadable package and live-demo artifacts.
+
+### 2. Reproduce the results locally
+
+Requires **Python 3.12+**. Run the following in a terminal; no database server, cloud
+account, AI key or running API is required:
+
+```bash
+git clone https://github.com/pushp2211/Scoreme.git
+cd Scoreme
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.lock
+python -m pip install --no-deps -e .
+
+pytest --cov=decisionforge --cov-fail-under=95 --cov-report=term-missing
+ruff check src tests scripts
+ruff format --check src tests scripts
+python -m build
+python scripts/demo.py --output work/live-demo.json
+```
+
+On Windows, use `python` and `.venv\Scripts\Activate.ps1` instead of the Python/activation
+commands above. The lock file includes development tools and runtime packages.
+
+Expected: **89 passing tests**, **99.67% statement coverage**, successful lint/format
+and build commands, and **15 checks passed** from the demo. Every command should exit
+with code 0; a failed assertion or coverage below 95% causes a nonzero exit status.
+The demo creates a temporary database, starts a real HTTP API and separate worker,
+saves complete explanations to `work/live-demo.json`, and stops its processes.
+
+### 3. Inspect the API and business outcomes
+
+Follow [Run locally](#run-locally) to start the API and retry worker, then open
+**http://127.0.0.1:8000/docs**. Use [Submit a decision](#submit-a-decision) for the exact
+request body, idempotency header, manual-resolution request and explanation endpoints.
+
+| Scenario to validate | Expected behavior |
+| --- | --- |
+| Valid baseline loan | `APPROVED`, with a rule trace and provider result |
+| Applicant age 17 | `REJECTED`, explained by the `underage` rule |
+| Loan amount 200000 | `MANUAL_REVIEW`; reviewer decision and reason are audited |
+| `simulation: {"fail_until": 1}` | `RETRY_PENDING`, then `APPROVED` after the worker retries |
+| Same input and idempotency key twice | Same request ID; replay returns HTTP 200 |
+| Same key with different input | HTTP 409 conflict |
+| Publish changed rules as a new version | New requests use new rules; earlier requests retain their version |
+
+Use a fresh idempotency key for each independent scenario. The automated suite also
+checks retry exhaustion, concurrent duplicates, restart recovery and rollback after
+an injected partial-save failure. Follow the [configuration change recipe](docs/CONFIGURATION.md#a-policy-change-end-to-end)
+to verify a policy update without editing engine code.
+
+## About the project
+
 A configurable workflow decision platform built for the **Resilient Decision System**
 hackathon assignment. It accepts structured requests, applies explainable rules,
 executes stages, persists state, and recovers from failures with bounded retries.
@@ -14,21 +100,12 @@ executes stages, persists state, and recovers from failures with bounded retries
 
 ## Run locally
 
-Requires **Python 3.12+**. No database server, cloud account, AI key or paid service.
-Run commands from the repository root.
+Complete the installation in [How to validate](#how-to-validate) first. From the
+repository root with the virtual environment activated, start the API:
 
 ```bash
-git clone https://github.com/pushp2211/Scoreme.git
-cd Scoreme
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.lock
-python -m pip install --no-deps -e .
 decisionforge serve
 ```
-
-On Windows, use `python` and `.venv\Scripts\Activate.ps1` instead of the activation
-command above. The lock file includes development tools as well as runtime packages.
 
 Open **http://127.0.0.1:8000/docs** for the interactive REST interface. The server seeds
 both workflow configurations, and stores decisions in `data/decisionforge.db`.
@@ -87,23 +164,6 @@ curl http://127.0.0.1:8000/requests/REQUEST_ID/resolve \
   -H 'Content-Type: application/json' \
   -d '{"decision":"approve","actor":"reviewer-001","reason":"Supporting documents checked"}'
 ```
-
-## Verify the submission
-
-```bash
-pytest --cov=decisionforge --cov-fail-under=95 --cov-report=term-missing
-ruff check src tests scripts
-ruff format --check src tests scripts
-python -m build
-python scripts/demo.py --output work/live-demo.json
-```
-
-The demo starts a **real HTTP server and separate retry worker** against a temporary
-SQLite database, exercises 15 acceptance checks, saves complete explanations, and
-stops the processes. It requires no running service and does not alter your data.
-Checked-in evidence: [results](docs/RESULTS.md),
-[decision explanation guide](docs/EXAMPLES.md),
-[actual HTTP demo output](docs/examples/live-demo.json).
 
 ## Change a workflow without changing engine code
 
