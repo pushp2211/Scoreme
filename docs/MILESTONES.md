@@ -4,6 +4,9 @@ These prompts translate the supplied hackathon brief into reviewable engineering
 They are project instructions, not a claim that each requirement has already passed.
 Each milestone is a separate Git commit; final evidence is in `docs/RESULTS.md`.
 
+**Status: all five milestones completed and pushed.** The results report maps each
+milestone to its commit and records local verification plus a successful GitHub Actions run.
+
 ## M1 — Frame the problem and repository
 
 **Action prompt:** Design a generic configurable decision service. Map every required

@@ -14,13 +14,14 @@ Repository: **https://github.com/pushp2211/Scoreme**. Project name: **DecisionFo
 | `git diff --check` | Passed |
 | `pip check` | No broken requirements |
 | Clean virtual environment | Install from project dependency declarations and full test suite passed |
-| Packaging | Built wheel and source distribution successfully |
+| Packaging | Built wheel and source distribution; all 89 tests also pass from extracted source archive |
 | Separate-process live HTTP demo | **15 checks passed** |
 
 The exact dependency versions are in `requirements.lock`. A fresh virtual environment
 was used to resolve this lock and run the full tests. `.github/workflows/ci.yml`
 repeats lint, format, coverage, package build and live HTTP acceptance checks on GitHub.
-The latest run status is visible in the repository's **Actions** tab.
+GitHub Actions independently passed on commit `1fff5b2`: [verified run](https://github.com/pushp2211/Scoreme/actions/runs/43417103641).
+The latest run status is also visible in the repository's **Actions** tab.
 
 ## Verified behavior
 
@@ -83,7 +84,7 @@ and OpenAPI. [Explanation examples](EXAMPLES.md) explain the raw traces in busin
 | Repository integration, preserving original contents/history | `1fb9f44` |
 | M3: durable engine and recovery | `cd8b849` |
 | M4: REST interface and live acceptance demo | `e365dc2` |
-| M5: expanded verification and company handoff | Commit containing this report; see Git history |
+| M5: expanded verification and company handoff | `1fff5b2` |
 
 All milestone action prompts and acceptance criteria are in [MILESTONES.md](MILESTONES.md).
 The existing Scoreme repository was used because the connected GitHub integration
@@ -102,6 +103,6 @@ idempotency rather than a claim of exactly-once execution. Schemas are self-cont
 and workflow graphs are acyclic. See [ARCHITECTURE.md](ARCHITECTURE.md) for the reasoning
 and scaling plan.
 
-The wheel contains the engine/API/CLI; sample YAML configurations and the demonstration
-scripts are repository assets. Run from the checkout, or provide the configuration
+The wheel contains the engine/API/CLI. The source archive also includes sample YAML
+configurations, documentation, demonstration scripts, locked dependencies and test fixtures. Run from the checkout, or provide the configuration
 folder explicitly with `decisionforge serve --configs /path/to/configs`.
