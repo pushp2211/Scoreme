@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "decisionforge"
 version = "1.0.0"
 description = "A configurable, durable and explainable workflow decision platform"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<1",
