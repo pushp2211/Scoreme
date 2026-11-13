@@ -14,3 +14,7 @@ data/
 *.db-wal
 .env
 work/
+
+# Existing repository exclusions
+*.o
+*.ali
