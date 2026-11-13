@@ -1,0 +1,76 @@
+workflow_id: loan_approval
+version: 1
+description: Loan eligibility with identity verification and risk review
+input_schema:
+  type: object
+  additionalProperties: false
+  required: [applicant_id, age, income, amount, consent]
+  properties:
+    applicant_id: {type: string, minLength: 1, maxLength: 100}
+    age: {type: integer, minimum: 0, maximum: 130}
+    income: {type: number, minimum: 0, maximum: 1000000000}
+    amount: {type: number, exclusiveMinimum: 0, maximum: 1000000000}
+    consent: {type: boolean}
+    simulation:
+      type: object
+      additionalProperties: false
+      properties:
+        fail_until: {type: integer, minimum: 0, maximum: 10}
+        permanent_failure: {type: boolean}
+        verified: {type: boolean}
+        risk_score: {type: integer, minimum: 0, maximum: 100}
+start: eligibility
+retry: {max_attempts: 3, base_delay_seconds: 2, max_delay_seconds: 30}
+stages:
+  eligibility:
+    type: rules
+    rules:
+      - id: missing_consent
+        description: Explicit consent is mandatory
+        condition: {field: input.consent, op: eq, value: false}
+        on_match: rejected
+      - id: underage
+        description: Applicant must be at least 18 years old
+        condition: {field: input.age, op: lt, value: 18}
+        on_match: rejected
+      - id: income_below_minimum
+        description: Annual income must be at least 30000
+        condition: {field: input.income, op: lt, value: 30000}
+        on_match: rejected
+    default: identity
+  identity:
+    type: dependency
+    adapter: simulated_verification
+    next: risk
+    on_failure: review
+  risk:
+    type: rules
+    rules:
+      - id: identity_failed
+        description: Unverified identity cannot be approved
+        condition: {field: dependencies.identity.verified, op: eq, value: false}
+        on_match: rejected
+      - id: high_risk
+        description: Risk scores of 80 or above require rejection
+        condition: {field: dependencies.identity.risk_score, op: gte, value: 80}
+        on_match: rejected
+      - id: review_required
+        description: Elevated risk or large amount requires human judgement
+        condition:
+          any:
+            - {field: dependencies.identity.risk_score, op: gte, value: 50}
+            - {field: input.amount, op: gt, value: 100000}
+        on_match: review
+    default: approved
+  review:
+    type: manual
+    reason: Large amount, elevated risk, or unavailable verification requires human review
+    decisions: {approve: approved, reject: rejected}
+  approved:
+    type: terminal
+    outcome: APPROVED
+    reason: Eligibility and configured verification requirements satisfied or reviewer approved
+  rejected:
+    type: terminal
+    outcome: REJECTED
+    reason: A blocking rule matched or reviewer rejected; consult rule and review audit events
